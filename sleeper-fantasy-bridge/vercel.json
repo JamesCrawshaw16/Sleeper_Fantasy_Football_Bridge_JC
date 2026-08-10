@@ -1,0 +1,7 @@
+{
+  "functions": {
+    "api/fantasy-sleeper.js": {
+      "maxDuration": 10
+    }
+  }
+}
