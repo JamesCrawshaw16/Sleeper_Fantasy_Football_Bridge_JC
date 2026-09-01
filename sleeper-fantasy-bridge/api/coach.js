@@ -2,48 +2,88 @@ const MODES = {
   coming_up: `
 The user's next draft pick is approaching.
 
-Give:
-- One clear preferred target.
-- 3 realistic alternatives.
-- A very short reason for each.
-- A contingency note about what could happen before their pick.
+Return EXACTLY this style:
 
-Prioritise decision usefulness over exhaustive analysis.
+1. PLAYER — POS, TEAM
+One short sentence explaining why.
+
+2. PLAYER — POS, TEAM
+One short sentence explaining why.
+
+3. PLAYER — POS, TEAM
+One short sentence explaining why.
+
+PLAN: PLAYER 1 → PLAYER 2 → PLAYER 3
+
+Maximum 100 words total.
+
+The explanation should contain only decision-useful context:
+value, scoring fit, roster construction, availability risk,
+current role or important current injury information.
+
+Do not include URLs.
+Do not include citations.
+Do not list sources.
+Do not explain your research.
 `,
 
   on_clock: `
 THE USER IS ON THE CLOCK.
 
-Be extremely concise.
+Return ONLY:
 
-Give:
-1. PICK: your preferred player.
-2. BACKUPS: up to three alternatives in order.
-3. WHY: no more than three short sentences.
+PICK: PLAYER — POS, TEAM
+One sentence why.
 
-Do not waste time explaining basic fantasy concepts.
+BACKUPS: PLAYER → PLAYER → PLAYER
+
+Maximum 55 words.
+
+Do not include URLs.
+Do not include citations.
+Do not list sources.
+Do not explain your research.
 `,
 
   what_happened: `
-Analyse the selections since the user's previous pick.
+Analyse selections since the user's previous pick.
 
-Explain:
-- What changed materially.
-- Any genuine positional run.
-- Whether the market changed the user's priorities.
-- Any value that may now be falling.
+Return:
 
-Do not recommend reacting to a run merely because it exists.
+BOARD: One or two short sentences describing what materially changed.
+
+IMPACT: One short sentence describing what it means for us.
+
+WATCH: Up to three player names or one position to watch.
+
+Maximum 90 words.
+
+Ignore activity that does not affect our decision.
+
+Do not include URLs.
+Do not include citations.
+Do not list sources.
 `,
 
   best_value: `
-Give a compact view of the best currently available value by position.
+Give the best currently available value by relevant position.
 
-Cover:
-QB, RB, WR, TE, DL, LB and DB where useful.
+Use ONLY positions with a genuinely interesting option.
 
-Focus particularly on positions relevant to the user's roster construction and league scoring.
-Do not imply the user must draft a position simply because it is empty.
+Format each line:
+
+POSITION — PLAYER, TEAM — very short reason
+
+Then:
+
+BEST VALUE: PLAYER
+
+Maximum 120 words.
+
+Do not include URLs.
+Do not include citations.
+Do not list sources.
+Do not explain your research.
 `,
 };
 
