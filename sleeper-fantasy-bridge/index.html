@@ -1670,26 +1670,39 @@
     }
 
     function renderCoachMessage(draft) {
-      if (draft.is_my_turn) {
-        elements.coachMessage.textContent =
-          "We're on the clock. In Phase 2 this panel will immediately produce a ranked shortlist with context.";
-        return;
-      }
+  /*
+   * Don't destroy an actual coaching
+   * response during automatic refresh.
+   */
+  if (
+    elements.coachMessage.classList
+      .contains("coach-response")
+  ) {
+    return;
+  }
 
-      if (
-        typeof draft.picks_until_my_turn ===
-          "number" &&
-        draft.picks_until_my_turn <= 3 &&
-        draft.status === "drafting"
-      ) {
-        elements.coachMessage.textContent =
-          `We're ${draft.picks_until_my_turn} picks away. This is exactly where the “give me options” button will kick in.`;
-        return;
-      }
+  if (draft.is_my_turn) {
+    elements.coachMessage.textContent =
+      "We're on the clock. Call the Draft Captain.";
 
-      elements.coachMessage.textContent =
-        "Live board connected. I can see the draft state; next we wire the coaching brain into these controls.";
-    }
+    return;
+  }
+
+  if (
+    typeof draft.picks_until_my_turn ===
+      "number" &&
+    draft.picks_until_my_turn <= 3 &&
+    draft.status === "drafting"
+  ) {
+    elements.coachMessage.textContent =
+      `We're ${draft.picks_until_my_turn} picks away. Time to start narrowing the board.`;
+
+    return;
+  }
+
+  elements.coachMessage.textContent =
+    "Live board connected. Draft Captain standing by.";
+}
 
     function render(data) {
       state = data;
@@ -1799,6 +1812,144 @@
           false;
       }
     }
+
+    async function askCoach(mode, button) {
+  const pinInput =
+    document.getElementById(
+      "war-room-pin"
+    );
+
+  const helper =
+    document.getElementById(
+      "coach-helper"
+    );
+
+  const pin =
+    pinInput.value.trim();
+
+  if (!pin) {
+    helper.textContent =
+      "War Room PIN required.";
+
+    pinInput.focus();
+
+    return;
+  }
+
+  const coachButtons =
+    document.querySelectorAll(
+      "[data-coach-mode]"
+    );
+
+  coachButtons.forEach(
+    (item) =>
+      item.disabled = true
+  );
+
+  button.classList.add(
+    "loading"
+  );
+
+  const originalText =
+    button.textContent;
+
+  button.textContent =
+    "Draft Captain is working…";
+
+  elements.coachMessage.classList.add(
+    "coach-response"
+  );
+
+  elements.coachMessage.textContent =
+    "Checking the live board and consulting current intelligence…";
+
+  helper.textContent =
+    "Fresh Sleeper state + current web research.";
+
+  try {
+    const response =
+      await fetch(
+        "/api/coach",
+        {
+          method: "POST",
+
+          headers: {
+            "Content-Type":
+              "application/json",
+          },
+
+          body: JSON.stringify({
+            mode,
+            pin,
+          }),
+        }
+      );
+
+    const data =
+      await response.json();
+
+    if (!response.ok) {
+      throw new Error(
+        data.detail ||
+        data.error ||
+        `Coach returned ${response.status}`
+      );
+    }
+
+    elements.coachMessage.textContent =
+      data.response;
+
+    helper.textContent =
+      data.draft_snapshot
+        ?.picks_until_my_turn != null
+          ? `Advice generated with ${data.draft_snapshot.picks_until_my_turn} picks before our next selection.`
+          : "Advice generated from the latest War Room state.";
+
+    /*
+     * Refresh the visible board too,
+     * because picks may have occurred
+     * while the coach was thinking.
+     */
+    refresh();
+
+  } catch (error) {
+    console.error(error);
+
+    elements.coachMessage.textContent =
+      `Headset malfunction: ${error.message}`;
+
+    helper.textContent =
+      "No decision has been made. Try again.";
+
+  } finally {
+    coachButtons.forEach(
+      (item) =>
+        item.disabled = false
+    );
+
+    button.classList.remove(
+      "loading"
+    );
+
+    button.textContent =
+      originalText;
+  }
+}
+
+document
+  .querySelectorAll(
+    "[data-coach-mode]"
+  )
+  .forEach((button) => {
+    button.addEventListener(
+      "click",
+      () =>
+        askCoach(
+          button.dataset.coachMode,
+          button
+        )
+    );
+  });
 
     elements.refreshButton.addEventListener(
       "click",
