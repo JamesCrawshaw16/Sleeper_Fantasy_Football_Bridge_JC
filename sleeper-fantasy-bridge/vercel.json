@@ -5,6 +5,9 @@
     },
     "api/draft-room.js": {
       "maxDuration": 10
+    },
+    "api/coach.js": {
+      "maxDuration": 30
     }
   }
 }
