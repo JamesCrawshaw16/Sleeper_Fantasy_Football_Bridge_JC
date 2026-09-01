@@ -403,20 +403,15 @@ ${JSON.stringify(room, null, 2)}
             model: "gpt-5.6-terra",
 
             reasoning: {
-              effort:
-                validMode === "on_clock"
-                  ? "low"
-                  : "medium",
+  effort: "low",
+},
             },
 
             tools: [
               {
                 type: "web_search",
 
-                search_context_size:
-                  validMode === "on_clock"
-                    ? "low"
-                    : "medium",
+               search_context_size: "low",
               },
             ],
 
