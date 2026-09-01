@@ -11,12 +11,13 @@ async function sleeper(path) {
   const response = await fetch(`${BASE}${path}`, {
     headers: {
       Accept: "application/json",
-      "User-Agent": "sleeper-fantasy-bridge/1.1",
+      "User-Agent": "sleeper-fantasy-bridge/1.2",
     },
   });
 
   if (!response.ok) {
     const body = await response.text().catch(() => "");
+
     throw new Error(
       `Sleeper API ${response.status} for ${path}${
         body ? `: ${body.slice(0, 200)}` : ""
@@ -60,7 +61,7 @@ function slimPlayer(playerId, players) {
     return {
       player_id: playerId,
       full_name: playerId,
-      team: playerId?.length <= 4 ? playerId : null,
+      team: String(playerId)?.length <= 4 ? playerId : null,
       position: null,
       fantasy_positions: [],
       injury_status: null,
@@ -69,10 +70,12 @@ function slimPlayer(playerId, players) {
 
   return {
     player_id: playerId,
+
     full_name:
       p.full_name ||
       [p.first_name, p.last_name].filter(Boolean).join(" ") ||
       playerId,
+
     first_name: p.first_name ?? null,
     last_name: p.last_name ?? null,
     team: p.team ?? null,
@@ -98,12 +101,14 @@ function compactPlayers(ids = [], players) {
 function pointsFromRosterSettings(settings = {}) {
   const base = Number(settings.fpts ?? 0);
   const decimal = Number(settings.fpts_decimal ?? 0);
+
   return base + decimal / 100;
 }
 
 function pointsAgainstFromRosterSettings(settings = {}) {
   const base = Number(settings.fpts_against ?? 0);
   const decimal = Number(settings.fpts_against_decimal ?? 0);
+
   return base + decimal / 100;
 }
 
@@ -145,6 +150,7 @@ function cleanTransaction(tx, players) {
 function cleanMatchup(entry, players) {
   const starterIds = (entry?.starters ?? []).filter(isRealPlayerId);
   const allIds = (entry?.players ?? []).filter(isRealPlayerId);
+
   const starterSet = new Set(starterIds.map(String));
 
   return {
@@ -152,7 +158,9 @@ function cleanMatchup(entry, players) {
     matchup_id: entry?.matchup_id ?? null,
     points: entry?.points ?? 0,
     custom_points: entry?.custom_points ?? null,
+
     starters: compactPlayers(starterIds, players),
+
     bench: allIds
       .filter((id) => !starterSet.has(String(id)))
       .map((id) => slimPlayer(id, players))
@@ -169,15 +177,19 @@ function cleanDraftPick(pick, players, usersById) {
     slimPlayer(pick.player_id, players) ||
     {
       player_id: pick.player_id,
+
       full_name:
         [pick.metadata?.first_name, pick.metadata?.last_name]
           .filter(Boolean)
           .join(" ") || pick.player_id,
+
       team: pick.metadata?.team ?? null,
       position: pick.metadata?.position ?? null,
+
       fantasy_positions: pick.metadata?.position
         ? [pick.metadata.position]
         : [],
+
       injury_status: pick.metadata?.injury_status ?? null,
     };
 
@@ -202,7 +214,9 @@ function resolveMyDraftSlot(draft, myRosterId, myUserId) {
         String(rosterId) === String(myRosterId)
     );
 
-    if (hit) return Number(hit[0]);
+    if (hit) {
+      return Number(hit[0]);
+    }
   }
 
   if (draft.draft_order?.[myUserId] != null) {
@@ -247,6 +261,7 @@ function buildDraftOrder(draft, rosters, usersById) {
           slot: Number(slot),
           roster_id: roster?.roster_id ?? null,
           owner_id: userId,
+
           team_name: teamNameForUser(
             usersById[String(userId)]
           ),
@@ -257,6 +272,294 @@ function buildDraftOrder(draft, rosters, usersById) {
 
   return [];
 }
+
+/*
+ * =========================================================
+ * DRAFT INTELLIGENCE
+ * =========================================================
+ */
+
+function overallPickForSnakeRound(round, slot, teams) {
+  if (!round || !slot || !teams) return null;
+
+  const roundStart = (round - 1) * teams;
+
+  const positionInRound =
+    round % 2 === 1
+      ? slot
+      : teams - slot + 1;
+
+  return roundStart + positionInRound;
+}
+
+function buildMyScheduledPicks(rounds, teams, slot) {
+  if (!rounds || !teams || !slot) return [];
+
+  const picks = [];
+
+  for (let round = 1; round <= rounds; round++) {
+    const pickNo = overallPickForSnakeRound(
+      round,
+      slot,
+      teams
+    );
+
+    picks.push({
+      round,
+      slot_in_round:
+        round % 2 === 1
+          ? slot
+          : teams - slot + 1,
+
+      overall_pick: pickNo,
+    });
+  }
+
+  return picks;
+}
+
+function emptyPositionCounts() {
+  return {
+    QB: 0,
+    RB: 0,
+    WR: 0,
+    TE: 0,
+    K: 0,
+    DEF: 0,
+    DL: 0,
+    LB: 0,
+    DB: 0,
+    OTHER: 0,
+  };
+}
+
+function normalizeDraftPosition(player) {
+  const position = player?.position;
+
+  if (!position) return "OTHER";
+
+  const known = [
+    "QB",
+    "RB",
+    "WR",
+    "TE",
+    "K",
+    "DEF",
+    "DL",
+    "LB",
+    "DB",
+  ];
+
+  if (known.includes(position)) {
+    return position;
+  }
+
+  /*
+   * Sleeper sometimes uses more specific defensive
+   * designations. Collapse them into our league buckets.
+   */
+  if (
+    ["DE", "DT", "NT", "EDGE"].includes(position)
+  ) {
+    return "DL";
+  }
+
+  if (
+    ["CB", "S", "FS", "SS"].includes(position)
+  ) {
+    return "DB";
+  }
+
+  return "OTHER";
+}
+
+function countPositions(picks = []) {
+  const counts = emptyPositionCounts();
+
+  for (const pick of picks) {
+    const position = normalizeDraftPosition(
+      pick.player
+    );
+
+    counts[position] =
+      (counts[position] || 0) + 1;
+  }
+
+  return counts;
+}
+
+function detectRecentPositionRun(picks = []) {
+  if (picks.length < 3) return null;
+
+  const recent = picks.slice(-8);
+  const counts = countPositions(recent);
+
+  const candidates = Object.entries(counts)
+    .filter(([position]) => position !== "OTHER")
+    .sort((a, b) => b[1] - a[1]);
+
+  const [topPosition, topCount] =
+    candidates[0] || [];
+
+  if (!topPosition || topCount < 3) {
+    return null;
+  }
+
+  return {
+    position: topPosition,
+    picks_in_last_8: topCount,
+    sample_size: recent.length,
+  };
+}
+
+function buildDraftIntelligence({
+  draft,
+  cleanedDraftPicks,
+  myDraftPicks,
+  myDraftSlot,
+  myRosterId,
+}) {
+  if (!draft) return null;
+
+  const teams =
+    Number(draft.settings?.teams || 0);
+
+  const rounds =
+    Number(draft.settings?.rounds || 0);
+
+  const picksMade =
+    cleanedDraftPicks.length;
+
+  const totalExpected =
+    teams * rounds;
+
+  const nextOverallPick =
+    picksMade < totalExpected
+      ? picksMade + 1
+      : null;
+
+  const scheduledPicks =
+    buildMyScheduledPicks(
+      rounds,
+      teams,
+      myDraftSlot
+    );
+
+  const futurePicks =
+    scheduledPicks.filter(
+      (pick) =>
+        pick.overall_pick > picksMade
+    );
+
+  const myNextPick =
+    futurePicks[0] || null;
+
+  const picksUntilMyTurn =
+    myNextPick && nextOverallPick
+      ? Math.max(
+          0,
+          myNextPick.overall_pick -
+            nextOverallPick
+        )
+      : null;
+
+  const isMyTurn =
+    myNextPick &&
+    nextOverallPick != null
+      ? myNextPick.overall_pick ===
+        nextOverallPick
+      : false;
+
+  const lastMyPick =
+    myDraftPicks.length
+      ? myDraftPicks[
+          myDraftPicks.length - 1
+        ]
+      : null;
+
+  const playersTakenSinceMyLastPick =
+    lastMyPick
+      ? cleanedDraftPicks.filter(
+          (pick) =>
+            pick.pick_no >
+            lastMyPick.pick_no
+        )
+      : cleanedDraftPicks;
+
+  const recentPicks =
+    cleanedDraftPicks.slice(-10);
+
+  const myRosterSoFar =
+    myDraftPicks.map((pick) => ({
+      round: pick.round,
+      pick_no: pick.pick_no,
+      player: pick.player,
+    }));
+
+  return {
+    draft_status:
+      draft.status ?? null,
+
+    draft_complete:
+      totalExpected > 0 &&
+      picksMade >= totalExpected,
+
+    next_overall_pick:
+      nextOverallPick,
+
+    is_my_turn:
+      Boolean(isMyTurn),
+
+    my_next_pick:
+      myNextPick,
+
+    picks_until_my_turn:
+      picksUntilMyTurn,
+
+    my_future_picks:
+      futurePicks,
+
+    my_roster_so_far:
+      myRosterSoFar,
+
+    position_counts:
+      countPositions(myDraftPicks),
+
+    league_position_counts:
+      countPositions(
+        cleanedDraftPicks
+      ),
+
+    last_10_picks:
+      recentPicks,
+
+    recent_position_counts:
+      countPositions(recentPicks),
+
+    recent_position_run:
+      detectRecentPositionRun(
+        cleanedDraftPicks
+      ),
+
+    players_taken_since_my_last_pick:
+      playersTakenSinceMyLastPick,
+
+    picks_made:
+      picksMade,
+
+    total_expected_picks:
+      totalExpected || null,
+
+    my_roster_id:
+      myRosterId,
+  };
+}
+
+/*
+ * =========================================================
+ * MAIN HANDLER
+ * =========================================================
+ */
 
 export default async function handler(req, res) {
   try {
@@ -288,7 +591,8 @@ export default async function handler(req, res) {
       });
     }
 
-    const nflState = await sleeper("/state/nfl");
+    const nflState =
+      await sleeper("/state/nfl");
 
     const season = String(
       req.query.season ||
@@ -313,7 +617,10 @@ export default async function handler(req, res) {
       )}`
     );
 
-    if (!Array.isArray(leagues) || leagues.length === 0) {
+    if (
+      !Array.isArray(leagues) ||
+      leagues.length === 0
+    ) {
       return res.status(404).json({
         error: `No Sleeper NFL leagues found for ${username} in ${season}.`,
       });
@@ -321,7 +628,8 @@ export default async function handler(req, res) {
 
     let league = leagues.find(
       (l) =>
-        String(l.league_id) === String(requestedLeagueId)
+        String(l.league_id) ===
+        String(requestedLeagueId)
     );
 
     if (!league && leagues.length === 1) {
@@ -330,12 +638,15 @@ export default async function handler(req, res) {
 
     if (!league) {
       return res.status(300).json({
-        error: "Could not uniquely identify the league.",
-        available_leagues: leagues.map((l) => ({
-          league_id: l.league_id,
-          name: l.name,
-          status: l.status,
-        })),
+        error:
+          "Could not uniquely identify the league.",
+
+        available_leagues:
+          leagues.map((l) => ({
+            league_id: l.league_id,
+            name: l.name,
+            status: l.status,
+          })),
       });
     }
 
@@ -349,50 +660,70 @@ export default async function handler(req, res) {
       players,
       drafts,
     ] = await Promise.all([
-      sleeper(`/league/${league.league_id}/rosters`),
-      sleeper(`/league/${league.league_id}/users`),
-      sleeper(`/league/${league.league_id}/matchups/${week}`),
+      sleeper(
+        `/league/${league.league_id}/rosters`
+      ),
+
+      sleeper(
+        `/league/${league.league_id}/users`
+      ),
+
+      sleeper(
+        `/league/${league.league_id}/matchups/${week}`
+      ),
+
       sleeper(
         `/league/${league.league_id}/transactions/${week}`
       ),
+
       sleeper(
         "/players/nfl/trending/add?lookback_hours=24&limit=25"
       ),
+
       sleeper(
         "/players/nfl/trending/drop?lookback_hours=24&limit=25"
       ),
+
       getActivePlayers(),
-      sleeper(`/league/${league.league_id}/drafts`),
+
+      sleeper(
+        `/league/${league.league_id}/drafts`
+      ),
     ]);
 
-    const usersById = Object.fromEntries(
-      (leagueUsers || []).map((u) => [
-        String(u.user_id),
-        u,
-      ])
-    );
+    const usersById =
+      Object.fromEntries(
+        (leagueUsers || []).map((u) => [
+          String(u.user_id),
+          u,
+        ])
+      );
 
-    const myRoster = (rosters || []).find(
-      (r) =>
-        String(r.owner_id) === String(user.user_id)
-    );
+    const myRoster =
+      (rosters || []).find(
+        (r) =>
+          String(r.owner_id) ===
+          String(user.user_id)
+      );
 
     if (!myRoster) {
       return res.status(404).json({
         error:
           "Your user exists in the league, but no owned roster was found.",
-        league_id: league.league_id,
-        league_name: league.name,
+
+        league_id:
+          league.league_id,
+
+        league_name:
+          league.name,
       });
     }
 
-    /*
-     * Sleeper returns the drafts associated with the league.
-     * Prefer the draft for the current season.
-     */
     const currentDraft =
       (drafts || []).find(
-        (d) => String(d.season) === String(season)
+        (d) =>
+          String(d.season) ===
+          String(season)
       ) ||
       (drafts || [])[0] ||
       null;
@@ -401,17 +732,24 @@ export default async function handler(req, res) {
     let draftPicks = [];
 
     if (currentDraft?.draft_id) {
-      [draftDetails, draftPicks] = await Promise.all([
-        sleeper(`/draft/${currentDraft.draft_id}`),
-        sleeper(`/draft/${currentDraft.draft_id}/picks`),
-      ]);
+      [draftDetails, draftPicks] =
+        await Promise.all([
+          sleeper(
+            `/draft/${currentDraft.draft_id}`
+          ),
+
+          sleeper(
+            `/draft/${currentDraft.draft_id}/picks`
+          ),
+        ]);
     }
 
-    const myMatchup = (matchups || []).find(
-      (m) =>
-        Number(m.roster_id) ===
-        Number(myRoster.roster_id)
-    );
+    const myMatchup =
+      (matchups || []).find(
+        (m) =>
+          Number(m.roster_id) ===
+          Number(myRoster.roster_id)
+      );
 
     const opponentMatchup =
       myMatchup?.matchup_id == null
@@ -419,152 +757,209 @@ export default async function handler(req, res) {
         : (matchups || []).find(
             (m) =>
               Number(m.matchup_id) ===
-                Number(myMatchup.matchup_id) &&
+                Number(
+                  myMatchup.matchup_id
+                ) &&
               Number(m.roster_id) !==
-                Number(myRoster.roster_id)
+                Number(
+                  myRoster.roster_id
+                )
           );
 
-    const opponentRoster = opponentMatchup
-      ? (rosters || []).find(
-          (r) =>
-            Number(r.roster_id) ===
-            Number(opponentMatchup.roster_id)
-        )
-      : null;
+    const opponentRoster =
+      opponentMatchup
+        ? (rosters || []).find(
+            (r) =>
+              Number(r.roster_id) ===
+              Number(
+                opponentMatchup.roster_id
+              )
+          )
+        : null;
 
-    /*
-     * Work out which players are already owned.
-     * This lets the trending section become a genuine
-     * "trending free agents" list after the draft.
-     */
-    const ownedIds = new Set(
-      (rosters || [])
-        .flatMap((r) => r.players || [])
-        .filter(isRealPlayerId)
-        .map(String)
-    );
-
-    const freeAgentTrending = (items = []) =>
-      items
-        .filter(
-          (item) =>
-            !ownedIds.has(String(item.player_id))
-        )
-        .map((item) => ({
-          count: item.count,
-          player: slimPlayer(
-            item.player_id,
-            players
-          ),
-        }));
-
-    /*
-     * Build the Doughnuts roster.
-     * Sleeper fills undrafted starter slots with player ID "0".
-     * We deliberately strip those out.
-     */
-    const myPlayerIds = (
-      myRoster.players || []
-    ).filter(isRealPlayerId);
-
-    const myPlayers = compactPlayers(
-      myPlayerIds,
-      players
-    );
-
-    const starterIds = (
-      myRoster.starters || []
-    ).filter(isRealPlayerId);
-
-    const starterSet = new Set(
-      starterIds.map(String)
-    );
-
-    /*
-     * Draft intelligence.
-     */
-    const draft = draftDetails || currentDraft;
-
-    const myDraftSlot = resolveMyDraftSlot(
-      draft,
-      myRoster.roster_id,
-      user.user_id
-    );
-
-    const cleanedDraftPicks = (draftPicks || [])
-      .map((pick) =>
-        cleanDraftPick(
-          pick,
-          players,
-          usersById
-        )
-      )
-      .sort(
-        (a, b) => a.pick_no - b.pick_no
+    const ownedIds =
+      new Set(
+        (rosters || [])
+          .flatMap(
+            (r) => r.players || []
+          )
+          .filter(isRealPlayerId)
+          .map(String)
       );
+
+    const freeAgentTrending =
+      (items = []) =>
+        items
+          .filter(
+            (item) =>
+              !ownedIds.has(
+                String(
+                  item.player_id
+                )
+              )
+          )
+          .map((item) => ({
+            count: item.count,
+
+            player: slimPlayer(
+              item.player_id,
+              players
+            ),
+          }));
+
+    const myPlayerIds =
+      (myRoster.players || [])
+        .filter(isRealPlayerId);
+
+    const myPlayers =
+      compactPlayers(
+        myPlayerIds,
+        players
+      );
+
+    const starterIds =
+      (myRoster.starters || [])
+        .filter(isRealPlayerId);
+
+    const starterSet =
+      new Set(
+        starterIds.map(String)
+      );
+
+    const draft =
+      draftDetails ||
+      currentDraft;
+
+    const myDraftSlot =
+      resolveMyDraftSlot(
+        draft,
+        myRoster.roster_id,
+        user.user_id
+      );
+
+    const cleanedDraftPicks =
+      (draftPicks || [])
+        .map((pick) =>
+          cleanDraftPick(
+            pick,
+            players,
+            usersById
+          )
+        )
+        .sort(
+          (a, b) =>
+            a.pick_no - b.pick_no
+        );
 
     const myDraftPicks =
       cleanedDraftPicks.filter(
         (pick) =>
-          String(pick.roster_id) ===
-            String(myRoster.roster_id) ||
-          String(pick.picked_by_user_id) ===
-            String(user.user_id)
+          String(
+            pick.roster_id
+          ) ===
+            String(
+              myRoster.roster_id
+            ) ||
+          String(
+            pick.picked_by_user_id
+          ) ===
+            String(
+              user.user_id
+            )
       );
 
     const totalDraftPicksExpected =
-      Number(draft?.settings?.rounds || 0) *
+      Number(
+        draft?.settings?.rounds || 0
+      ) *
       Number(
         draft?.settings?.teams ||
           league.total_rosters ||
           0
       );
 
+    const draftIntelligence =
+      buildDraftIntelligence({
+        draft,
+        cleanedDraftPicks,
+        myDraftPicks,
+        myDraftSlot,
+
+        myRosterId:
+          myRoster.roster_id,
+      });
+
     const payload = {
-      bridge_version: "1.1.0",
+      bridge_version: "1.2.0",
 
       generated_at:
         new Date().toISOString(),
 
       sleeper: {
         user: {
-          user_id: user.user_id,
-          username: user.username,
-          display_name: user.display_name,
+          user_id:
+            user.user_id,
+
+          username:
+            user.username,
+
+          display_name:
+            user.display_name,
         },
 
-        nfl_state: nflState,
+        nfl_state:
+          nflState,
       },
 
       league: {
-        league_id: league.league_id,
-        name: league.name,
-        season: league.season,
-        status: league.status,
-        total_rosters: league.total_rosters,
+        league_id:
+          league.league_id,
+
+        name:
+          league.name,
+
+        season:
+          league.season,
+
+        status:
+          league.status,
+
+        total_rosters:
+          league.total_rosters,
+
         roster_positions:
           league.roster_positions,
+
         scoring_settings:
           league.scoring_settings,
-        settings: league.settings,
+
+        settings:
+          league.settings,
       },
 
       my_team: {
-        roster_id: myRoster.roster_id,
+        roster_id:
+          myRoster.roster_id,
 
-        team_name: teamNameForUser(
-          usersById[String(user.user_id)]
-        ),
+        team_name:
+          teamNameForUser(
+            usersById[
+              String(user.user_id)
+            ]
+          ),
 
         record: {
           wins:
-            myRoster.settings?.wins ?? 0,
+            myRoster.settings?.wins ??
+            0,
 
           losses:
-            myRoster.settings?.losses ?? 0,
+            myRoster.settings?.losses ??
+            0,
 
           ties:
-            myRoster.settings?.ties ?? 0,
+            myRoster.settings?.ties ??
+            0,
 
           points_for:
             pointsFromRosterSettings(
@@ -580,37 +975,38 @@ export default async function handler(req, res) {
         waiver: {
           position:
             myRoster.settings
-              ?.waiver_position ?? null,
+              ?.waiver_position ??
+            null,
 
           budget_used:
             myRoster.settings
-              ?.waiver_budget_used ?? null,
+              ?.waiver_budget_used ??
+            null,
         },
 
-        starters: compactPlayers(
-          starterIds,
-          players
-        ),
+        starters:
+          compactPlayers(
+            starterIds,
+            players
+          ),
 
-        bench: myPlayers.filter(
-          (p) =>
-            !starterSet.has(
-              String(p.player_id)
-            )
-        ),
+        bench:
+          myPlayers.filter(
+            (p) =>
+              !starterSet.has(
+                String(
+                  p.player_id
+                )
+              )
+          ),
 
-        reserve: compactPlayers(
-          myRoster.reserve || [],
-          players
-        ),
+        reserve:
+          compactPlayers(
+            myRoster.reserve || [],
+            players
+          ),
       },
 
-      /*
-       * This is the important v1.1 addition.
-       *
-       * It uses Sleeper's ACTUAL draft object rather
-       * than league.settings.draft_rounds.
-       */
       draft: draft
         ? {
             draft_id:
@@ -666,11 +1062,13 @@ export default async function handler(req, res) {
 
               pick_timer_seconds:
                 draft.settings
-                  ?.pick_timer ?? null,
+                  ?.pick_timer ??
+                null,
 
               reversal_round:
                 draft.settings
-                  ?.reversal_round ?? null,
+                  ?.reversal_round ??
+                null,
             },
 
             expected_total_picks:
@@ -691,7 +1089,8 @@ export default async function handler(req, res) {
               cleanedDraftPicks.length,
 
             picks_remaining:
-              totalDraftPicksExpected > 0
+              totalDraftPicksExpected >
+              0
                 ? Math.max(
                     0,
                     totalDraftPicksExpected -
@@ -706,6 +1105,12 @@ export default async function handler(req, res) {
               myDraftPicks,
           }
         : null,
+
+      /*
+       * NEW IN v1.2
+       */
+      draft_intelligence:
+        draftIntelligence,
 
       current_week: {
         week,
@@ -737,7 +1142,8 @@ export default async function handler(req, res) {
                     ? teamNameForUser(
                         usersById[
                           String(
-                            opponentRoster.owner_id
+                            opponentRoster
+                              .owner_id
                           )
                         ]
                       )
@@ -750,7 +1156,8 @@ export default async function handler(req, res) {
         (transactions || [])
           .filter(
             (tx) =>
-              tx.status === "complete"
+              tx.status ===
+              "complete"
           )
           .map((tx) =>
             cleanTransaction(
@@ -772,39 +1179,47 @@ export default async function handler(req, res) {
       },
 
       league_teams:
-        (rosters || []).map((r) => ({
-          roster_id:
-            r.roster_id,
+        (rosters || []).map(
+          (r) => ({
+            roster_id:
+              r.roster_id,
 
-          owner_id:
-            r.owner_id,
+            owner_id:
+              r.owner_id,
 
-          team_name:
-            teamNameForUser(
-              usersById[
-                String(r.owner_id)
-              ]
-            ),
+            team_name:
+              teamNameForUser(
+                usersById[
+                  String(
+                    r.owner_id
+                  )
+                ]
+              ),
 
-          wins:
-            r.settings?.wins ?? 0,
+            wins:
+              r.settings?.wins ??
+              0,
 
-          losses:
-            r.settings?.losses ?? 0,
-
-          ties:
-            r.settings?.ties ?? 0,
-
-          points_for:
-            pointsFromRosterSettings(
+            losses:
               r.settings
-            ),
-        })),
+                ?.losses ??
+              0,
+
+            ties:
+              r.settings?.ties ??
+              0,
+
+            points_for:
+              pointsFromRosterSettings(
+                r.settings
+              ),
+          })
+        ),
     };
 
     res.setHeader(
       "Cache-Control",
-      "public, s-maxage=30, stale-while-revalidate=60"
+      "public, s-maxage=15, stale-while-revalidate=30"
     );
 
     return res
