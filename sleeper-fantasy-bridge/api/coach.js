@@ -63,6 +63,7 @@ Ignore activity that does not affect our decision.
 Do not include URLs.
 Do not include citations.
 Do not list sources.
+Do not explain your research.
 `,
 
   best_value: `
@@ -137,7 +138,7 @@ export default async function handler(req, res) {
     } = req.body || {};
 
     /*
-     * Protect the API route.
+     * Protect the paid API route.
      * The OpenAI key NEVER goes to the browser.
      */
     if (
@@ -210,6 +211,9 @@ export default async function handler(req, res) {
 Answer the user's specific fantasy football question:
 
 ${String(question).slice(0, 1000)}
+
+Keep the answer concise and decision-focused.
+Do not include URLs, citations, source names or source lists.
 `
         : MODES[validMode];
 
@@ -220,7 +224,7 @@ Your job is ADVISORY ONLY.
 
 The human manager always makes the final selection.
 
-You give options, context, probabilities, roster implications and a preferred recommendation where appropriate.
+You give options, context, roster implications and a preferred recommendation where appropriate.
 
 Never claim you have drafted, added, dropped, benched or started a player.
 
@@ -306,7 +310,7 @@ For player evaluation, prioritise CURRENT 2026 information including:
 - role changes
 - current fantasy rankings
 - ADP where useful
-- credible beat/reporting information
+- credible recent reporting
 
 Do not blindly copy generic rankings.
 
@@ -318,20 +322,19 @@ Adjust recommendations for THIS league's:
 - six IDP starters
 - unusually valuable IDP big-play scoring
 
-Consider the fact that the user's draft slot creates nine selections between consecutive picks.
+Consider the gap between the user's consecutive selections when deciding whether a target is likely to survive until the next pick.
 
 Do not manufacture injuries, rankings or news.
 
-If web information conflicts or is unclear, say so briefly.
+If current information conflicts or is unclear, account for that uncertainty in the recommendation.
 
-STYLE:
 OUTPUT DISCIPLINE:
 
-The manager is looking at this during a 60-second draft clock.
+The manager may be looking at this during a 60-second draft clock.
 
 Every word must earn its place.
 
-Research extensively internally when necessary, but present only the conclusion.
+Research internally when necessary, but present only the conclusion.
 
 NEVER output:
 - URLs
@@ -342,17 +345,17 @@ NEVER output:
 - markdown links
 - descriptions of your search process
 
-Current information should be incorporated naturally.
-
-For example:
+Current information should instead be incorporated naturally.
 
 GOOD:
 "Puka Nacua — WR, LAR — Elite PPR volume and currently healthy; strongest pivot if the premium RBs disappear."
 
 BAD:
-"According to ESPN and FantasyPros, Puka Nacua is ranked highly. You can read more at https://..."
+"According to ESPN and FantasyPros, Puka Nacua is ranked highly. You can read more at..."
 
 The manager wants OPTIONS + CONTEXT, not a research report.
+
+STYLE:
 
 You are a calm, experienced coach in a draft operations room.
 
@@ -360,7 +363,7 @@ Be decisive without pretending certainty.
 
 Plain English.
 
-Short paragraphs.
+Short, snappy responses.
 
 Some personality is welcome.
 
@@ -382,8 +385,9 @@ ${JSON.stringify(room, null, 2)}
     /*
      * OpenAI Responses API.
      *
-     * Terra gives us a good balance between
-     * intelligence, latency and cost.
+     * Keep reasoning and web-search context low:
+     * this is a live decision-support tool where
+     * latency matters.
      */
     const openAIResponse =
       await fetch(
@@ -403,15 +407,13 @@ ${JSON.stringify(room, null, 2)}
             model: "gpt-5.6-terra",
 
             reasoning: {
-  effort: "low",
-},
+              effort: "low",
             },
 
             tools: [
               {
                 type: "web_search",
-
-               search_context_size: "low",
+                search_context_size: "low",
               },
             ],
 
@@ -423,8 +425,8 @@ ${JSON.stringify(room, null, 2)}
 
             max_output_tokens:
               validMode === "on_clock"
-                ? 650
-                : 1200,
+                ? 400
+                : 800,
           }),
         }
       );
