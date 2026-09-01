@@ -1029,38 +1029,54 @@
             </div>
 
             <div class="coach-actions">
-              <button
-                class="coach-button primary"
-                type="button"
-                disabled
-              >
-                We're coming up — give me options
-              </button>
+  <button
+    class="coach-button primary"
+    type="button"
+    data-coach-mode="coming_up"
+  >
+    We're coming up — give me options
+  </button>
 
-              <button
-                class="coach-button"
-                type="button"
-                disabled
-              >
-                I'm on the clock!
-              </button>
+  <button
+    class="coach-button"
+    type="button"
+    data-coach-mode="on_clock"
+  >
+    I'm on the clock!
+  </button>
 
-              <button
-                class="coach-button"
-                type="button"
-                disabled
-              >
-                What just happened?
-              </button>
+  <button
+    class="coach-button"
+    type="button"
+    data-coach-mode="what_happened"
+  >
+    What just happened?
+  </button>
 
-              <button
-                class="coach-button"
-                type="button"
-                disabled
-              >
-                Best value by position
-              </button>
-            </div>
+  <button
+    class="coach-button"
+    type="button"
+    data-coach-mode="best_value"
+  >
+    Best value by position
+  </button>
+</div>
+
+<div class="coach-auth">
+  <input
+    id="war-room-pin"
+    type="password"
+    placeholder="War Room PIN"
+    autocomplete="current-password"
+  />
+</div>
+
+<div
+  class="coach-coming"
+  id="coach-helper"
+>
+  Enter your War Room PIN, then call the Draft Captain.
+</div>
 
             <div class="coach-coming">
               These light up in Phase 2.
