@@ -2,6 +2,9 @@
   "functions": {
     "api/fantasy-sleeper.js": {
       "maxDuration": 10
+    },
+    "api/draft-room.js": {
+      "maxDuration": 10
     }
   }
 }
