@@ -1217,10 +1217,15 @@ export default async function handler(req, res) {
         ),
     };
 
-    res.setHeader(
-      "Cache-Control",
-      "public, s-maxage=15, stale-while-revalidate=30"
-    );
+    const cacheControl =
+  draft?.status === "drafting"
+    ? "no-store"
+    : "public, s-maxage=15, stale-while-revalidate=30";
+
+res.setHeader(
+  "Cache-Control",
+  cacheControl
+);
 
     return res
       .status(200)
