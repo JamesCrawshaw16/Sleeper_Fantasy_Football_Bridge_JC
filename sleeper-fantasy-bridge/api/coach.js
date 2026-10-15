@@ -6,7 +6,7 @@ function cleanCoachText(text){return text.replace(/\[([^\]]+)\]\(https?:\/\/[^)]
 const TEAM_ALIASES={JAC:"JAX",WSH:"WAS",LA:"LAR",OAK:"LV",SD:"LAC"};
 function normTeam(t){return TEAM_ALIASES[String(t||"").toUpperCase()]||String(t||"").toUpperCase()}
 async function getByeTeams(season,week){
- if(!Number.isInteger(+week)||+week<1||+week>18||!/^20\\d\\d$/.test(String(season)))throw Error("Invalid NFL schedule week");
+ if(!Number.isInteger(+week)||+week<1||+week>18||!/^20\d\d$/.test(String(season)))throw Error("Invalid NFL schedule week");
  const u="https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates="+season+"&seasontype=2&week="+week;
  const r=await fetch(u,{signal:AbortSignal.timeout(7000)});
  if(!r.ok)throw Error("NFL schedule unavailable");
@@ -19,10 +19,10 @@ async function getByeTeams(season,week){
 function validateAdvice(answer,room,byeTeams,mode){
  const owned=[...(room.my_team?.starters||[]),...(room.my_team?.bench||[]),...(room.my_team?.reserve||[])].filter(Boolean);
  const counts={};for(const p of owned)counts[p.position]=(counts[p.position]||0)+1;
- const lines=answer.split(/\\n/);
+ const lines=answer.split(/\n/);
  const names=owned.filter(p=>p.full_name);
  for(const line of lines){
-  const isDrop=/\\b(drop|cut|release|waive)\\b/i.test(line);
+  const isDrop=/\b(drop|cut|release|waive)\b/i.test(line);
   if(isDrop){
    for(const p of names)if(line.toLowerCase().includes(p.full_name.toLowerCase())){
     if(p.position==="QB"&&counts.QB<=2)return "A QB drop was proposed while only "+counts.QB+" quarterbacks are rostered.";
@@ -34,8 +34,8 @@ function validateAdvice(answer,room,byeTeams,mode){
  if(mode==="lineup"||mode==="waivers"){
   const onBye=names.filter(p=>byeTeams.includes(normTeam(p.team)));
   for(const p of onBye){
-   const line=lines.find(x=>/\\b(start|activate|play|slot in)\\b/i.test(x)&&x.toLowerCase().includes(p.full_name.toLowerCase()));
-   if(line&&!/\\b(don't|do not|avoid|never|cannot|can't|bench|sit)\\b/i.test(line))return "A bye-week player was suggested as a starter: "+p.full_name+".";
+   const line=lines.find(x=>/\b(start|activate|play|slot in)\b/i.test(x)&&x.toLowerCase().includes(p.full_name.toLowerCase()));
+   if(line&&!/\b(don't|do not|avoid|never|cannot|can't|bench|sit)\b/i.test(line))return "A bye-week player was suggested as a starter: "+p.full_name+".";
   }
  }
  return null;
